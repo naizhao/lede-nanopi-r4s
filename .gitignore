@@ -1,0 +1,9 @@
+# OpenWrt 构建树与备份（数十 GB，不入库）
+/openwrt/
+/openwrt-2023-bak/
+/openwrt-*-bak/
+
+# 构建日志
+*.log
+build.log
+golang-build.log
