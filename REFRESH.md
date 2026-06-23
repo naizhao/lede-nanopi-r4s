@@ -25,39 +25,45 @@ clash 集成用已失效的 `vernesong/OpenClash` 三内核(dev/premium/meta)下
 
 | 文件 | 作用 |
 |---|---|
-| `custom/openclash-core/Makefile` | mihomo arm64 内核包（PKGARCH `aarch64_generic`，版本 1.19.27） |
-| `apply-custom.sh` | 向干净 openwrt 树注入 nikki/smpackage feed + 部署 openclash-core 包 |
-| `clean-feeds.sh` | `feeds update` 后清理 smpackage 损坏/重复包 |
-| `update-clash.sh` | （备用）手动把 mihomo 烤进 `files/` overlay，非包方式 |
+| **`build.sh`** | **全功能一键脚本**：克隆 + feeds + smpackage清理 + 版本修正 + 自定义包 + BraWRT定制 + 编译 |
 | `nanopi-r4s.config` | 已验证的设备 `.config` 快照 |
+| `banner` | BraWRT ASCII banner |
+| `custom/openclash-core/` | mihomo arm64 内核包（mihomo 1.19.27 + GeoIP/Site）|
+| `custom/{xray-plugin,geoview,v2ray-plugin,hysteria}/` | 对齐 r2s 的代理 Go 包 Makefile + **固化 tarball**（GitHub 已移动 tag，必须固化）|
+| `custom/ruby/` | ruby 3.3.10 整包（修 gem 清单）|
+| `diy-part1.sh` / `diy-part2.sh` | **云编译(GitHub Actions)** 钩子；本地构建用 `build.sh` |
 
-## 从零复现步骤
+## 从零复现步骤（本地）
 
 ```bash
 cd /data/R4S
-git clone --depth 1 https://github.com/coolsnowwolf/lede openwrt
-cp nanopi-r4s.config openwrt/.config        # 设备配置
-./apply-custom.sh openwrt                    # 注入 feed + 自定义包
-cd openwrt
-./scripts/feeds update -a
-../clean-feeds.sh .                           # 清理 smpackage 损坏包（update 后、install 前）
-./scripts/feeds install -a
-./scripts/feeds uninstall nikki && ./scripts/feeds install -p nikki nikki  # 确保 nikki 来自 nikki feed
-make defconfig
-make -j$(nproc) || make -j1 V=s
+./build.sh all          # 克隆→feeds→清理→定制→配置→编译，一条命令到固件
+# 其它: ./build.sh feeds | customize | menu | build | rebuild | saveconfig
 ```
 
-## 构建期修复（已纳入脚本/快照）
+> `build.sh customize` 应用 BraWRT 定制：LAN IP `10.10.10.1`、主机名 `BraWRT`、
+> design 主题、BraWRT banner。（注：云编译走 `diy-part2.sh`，其 cpufreq 与
+> `OpenWrt→BraWRT` 锚点在 2026 树已失效，`build.sh` 用仍有效的锚点实现品牌定制。）
 
-- **yq 4.33.1 → 4.45.1**：Lean packages feed 自带的旧 yq(go-toml v2.0.6) 与 Go 1.26
-  不兼容（`undefined: InvalidAscii`），nikki 依赖它。已由 `clean-feeds.sh` 自动升级（对齐 r2s）。
-- **剔除 hwinfo**：其 host 构建缺 e2fsprogs libuuid 头（自身打包 bug），且无包依赖它。
-  已在 `nanopi-r4s.config` 快照中关闭。
+## 构建期修复（全部已纳入 `build.sh` / `custom/` / 快照）
+
+- **Go 1.26.4 → 1.23.12**：Lean 前沿 Go 编不了代理拉取的旧 Go 库（go-toml v1.9.5 /
+  yaml.v2，报 `undefined: Position / yaml_emitter_flush`）；而 Lean feed 的新版代理包
+  又要 go≥1.24/1.25/1.26 —— 双向冲突。降到 1.23.12（r2s 同款，mihomo 仍满足 go≥1.20），
+  并把代理 Go 包全部对齐 r2s 旧版（go.mod≤1.23）：
+  - xray-core 26.6.1→25.2.21、xray-plugin(kenzok→teddysun 1.8.24)、
+    geoview 0.2.6→0.1.10、v2ray-plugin 5.49.0→5.25.0、hysteria 2.9.2→2.6.4
+- **yq 4.33.1 → 4.45.1**（go-toml v2.0.6 与新 Go 不兼容；nikki 依赖 yq）
+- **ruby 3.3.6 → 3.3.10**（gem 文件清单不符，打包报 `cp: cannot stat .../gems`）
+- **feed `kenzok78` → `kenzok8`/small-package**（旧的已 404）
+- **smpackage 去重**：清掉 18 个递归/重复损坏包（消除 firewall4/nikki 被静默丢弃）
+- **剔除**非必需且需新 Go / 损坏的包：hwinfo、cloudflared、containerd/runc/tini、node
 
 ## 已知/遗留
 
-- `make defconfig` 残留 2 个**良性** VARIANT 递归告警：`mihomo-alpha↔mihomo-meta`
-  与 `strongswan-minimal↔strongswan-mod-kdf`，不影响构建（目标包均存活）。
-- mihomo 版本固定在 `custom/openclash-core/Makefile` 的 `PKG_VERSION`，
-  升级时改这一处即可（同步核对 MetaCubeX/mihomo 最新 release 的 arm64 资产名）。
-- 尚未跑完整 `make`；config 层 + 下载 URL(HTTP 200) 已验证。
+- `make defconfig` 残留 2 个**良性** VARIANT 递归告警（`mihomo-alpha↔mihomo-meta`、
+  `strongswan` 变体对），不影响构建。
+- **固件偏大**（squashfs ~210MB）：含 golang 编译器(67MB)、3 份 mihomo(去重可省)、
+  netdata/git/icu-full-data 等 kitchen-sink。如需精简，在 `menu` 里去掉即可。
+- 升级版本：mihomo 改 `custom/openclash-core/Makefile`；代理 Go 包改 `custom/*/`
+  对应 Makefile（注意 GitHub tarball hash 漂移，需同步更新固化 tarball）。
