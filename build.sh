@@ -246,7 +246,7 @@ do_build() {
     local start=$(date +%s) rc=0 i
     for i in 1 2 3 4 5; do
         echo "===== make $args (尝试 #$i) ====="
-        if make $args; then rc=0; break; fi
+        make $args && { rc=0; break; }
         rc=$?
         echo "===== 第 $i 次失败 rc=$rc, 重试续跑 ====="
         sleep 3
